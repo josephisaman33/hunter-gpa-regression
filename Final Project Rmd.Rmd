@@ -1,0 +1,480 @@
+---
+title: "Final Project"
+author: "Joseph Isaman"
+date: "18 December 2020"
+output:
+  html_document: default
+  pdf_document: default
+professor: Cynthia Ann Bryant
+class: Stat 214
+---
+
+```{r Loading Packages, message=FALSE, echo=FALSE, warning = FALSE}
+library(readxl)
+library(olsrr)
+library(fastDummies)
+library(tinytex)
+library(car)
+```
+
+
+### **Defining Modeling Goals**
+Consider the problem of modeling the Grade Point Average of a student attending Hunter College. In November 2034, Hunter College has become worried that they'd lose funding from the city because their average student GPA has steadily been dropping over the last few years. To combat this, they've decided to become more selective of the (both first year and transfer)  students they admit into their school as to guarantee an improvement in the average student GPA. The minimum expected GPA they want for their incoming students is a 2.70. One student, in particular, wants to attend Hunter College but the admissions office is hesitant to accept him into the school. (His statistics are listed at the end of this project.) The objective of this regression analysis is twofold: (1) determine if the student is safe to enroll in accordance to Hunter's new standards and (2) estimate a model for predicting future GPAs.
+
+
+
+### **The Data**
+The data employed for this purpose $(n=355 \text{ observations})$ were obtained from the population of over 20,000 randomly selected Hunter College students over the last few years. We believe this population to be useful for predicting the performance of possible future alumni. 
+
+```{r Loading Data}
+StdntSrvy <- read_xlsx("~/Downloads/R/R/1StudentSurvey D.xlsx")
+```
+
+We acknowledge that Hunter College will only be accepting students who are at most seniors. This is because students who've completed their senior year and gotten their GPAs wouldn't transfer - they've already graduated. So, we exclude all data with the level "Senior" for the variable Year. We'll also remove any rows with missing data. A preview of the first few rows of data are presented in the printout below.
+
+```{r Removing Seniors}
+StdntSrvy <- na.omit(droplevels(StdntSrvy[!StdntSrvy$Year == 'Senior',]))
+StdntSrvy
+```
+
+##### **Analyze/Summarize and Transform Variables**
+The dependent variable of interest is $y$, the college grade point average of the student on a 4.0 scale. The independent variables available for predicting $y$ are listed and (some) described below.
+
+$$\begin{split} 
+& {\text{1. Year - What class level is the student?}} \\ 
+& {\text{2. Gender}} \\ 
+& {\text{3. Award - Which award does the student prefer to win?}} \\ 
+& {\text{4. HigherSAT - Which SAT section score is higher?}} \\ 
+& {\text{5. Height}} \\ 
+& {\text{6. Weight}} \\ 
+& {\text{7. Siblings - Number of siblings}} \\ 
+& {\text{8. BirthOrder - Is the student first, second, third-born, etc.?}} \\ 
+& {\text{9. VerbalSAT - Score on verbal section of SAT}} \\ 
+& {\text{10. MathSAT - Score on math section of SAT}} \\ 
+& {\text{11. SAT - Combined math and verbal}} \\ 
+& {\text{12. Piercings - Number of body piercings}} \\ 
+\end{split}$$
+
+Some of these independent variables (height, weight, number of siblings, verbal SAT score, math SAT score, SAT, and number of piercings) are quantitative in nature, while the remaining (year, gender, preferred award, and birth order) are qualitative. (Birth order, despite taking on numerical values in the data frame, is a qualitative variable because it describes ordinality, rather than cardinality. In other words, it describes the relative order of things, rather than the actual existing number of things present.) Looking at the graphs below, we notice that most of the quantitative variables are approximately normal with the exception of number of siblings and number of piercings which seem to be skewed right. A transformation of these variables into their logarithmic form does not seem to be necessary because its range is not very extreme. Looking at the qualitative variables, all but gender seem to be unequal. 
+
+```{r Observing Data, echo=FALSE, message=FALSE}
+par(mfrow = c(3,3))
+  hist(StdntSrvy$GPA)
+  hist(StdntSrvy$Height)
+  hist(StdntSrvy$Weight)
+  hist(StdntSrvy$Siblings)
+  hist(StdntSrvy$VerbalSAT) 
+  hist(StdntSrvy$MathSAT) 
+  hist(StdntSrvy$SAT) 
+  hist(StdntSrvy$Piercings) 
+par(mfrow = c(2,2))  
+  pie(table(StdntSrvy$Year), main = "Year")
+  pie(table(StdntSrvy$Gender), main = "Gender")
+  pie(table(StdntSrvy$Award), main = "Award")
+  pie(table(StdntSrvy$BirthOrder), main = "BirthOrder")
+```
+
+
+
+### **Preparing and Cleaning the Data**
+##### **Testing for Multicollinearity**
+Looking at variables 2, 5, and 6, we suspect potential multicollinearity. Males are, on average, taller and therefore weigh more than females. There may be another instance of multicollinearity. This time, to compare two quantitative variables and one qualitative variable with one another, we must use box plots in addition to scatter plots. 
+
+```{r Pearsons Correlation Height-Weight-Gender}
+plot(StdntSrvy$Height, StdntSrvy$Weight, title("Scatterplot of Weight vs. Height"), xlab = "Height", ylab = "Weight")
+cor(StdntSrvy$Height, StdntSrvy$Weight)
+boxplot(StdntSrvy$Height ~ StdntSrvy$Gender, main = "Boxplot of Height and Gender", ylab = "Height")
+boxplot(StdntSrvy$Weight ~ StdntSrvy$Gender, main = "Boxplot of Weight and Gender", ylab = "Weight")
+```
+
+We observe that there exists a moderate, positive correlation between Height and Weight, as expected. This is backed up by the Pearson's correlation coefficient value $r=.6407$. Looking at the form of the box plots between the two graphs, they appear very similar in the sense that males are generally taller and heavier than females. The spread of the distributions also appears to be very similar when considering the size of quartiles relative to one another. We are faced with the problem: which variable(s) do we remove to avoid the problem of multicollinearity? We will certainly remove gender as a factor because the boxplots indicate some sort of relationship between these quantitative and qualitative variables. We will also be removing height for no more the reason because it doesn't make sense in the context of affecting GPA, and its outliers are more extreme than the outliers for weight.
+
+
+Looking at variables 9 through 11, we again suspect potential multicollinearity; it is obviously expected that students who have higher scores on either the verbal or mathematics sections are more likely to have higher combined SAT scores than those who don't. (To see this, recognize that SAT score is the sum of verbal and mathematics scores. It is impossible for a student who scores 800 on the math section to have an SAT score lower than 800. Likewise, it is impossible for a student who scores 100 on the verbal section to have an SAT score larger than 900.) We will check if multicollinearity exists by calculating Pearson's coefficient of correlation, $r$, between the aforementioned variables. 
+
+```{r Pearsons Correlation SAT scores}
+plot(StdntSrvy$VerbalSAT, StdntSrvy$SAT, title("Scatterplot of SAT vs. VerbalSAT"), xlab = "VerbalSAT", ylab = "SAT")
+cor(StdntSrvy$VerbalSAT, StdntSrvy$SAT)
+plot(StdntSrvy$MathSAT, StdntSrvy$SAT, title("Scatterplot of SAT vs. MathSAT"), xlab = "MathSAT", ylab = "SAT")
+cor(StdntSrvy$MathSAT, StdntSrvy$SAT)
+plot(StdntSrvy$VerbalSAT, StdntSrvy$MathSAT, title("Scatterplot of VerbalSAT vs. MathSAT"), xlab = "VerbalSAT", ylab = "MathSAT")
+cor(StdntSrvy$VerbalSAT, StdntSrvy$MathSAT)
+```
+
+As indicated by the printout above, the $r$ values of SAT scores with verbal and mathematics scores are $0.8626$ and $0.8470$, respectively. These values are very close to 1, and we therefore conclude that there exists a strong, positive linear correlation between the variables in question and a severe multicollinearity problem may exist. But which variable(s) should be removed to refrain from constructing a model with this potential problem? Observe that when verbal and mathematics scores are plotted against one another, it does not appear to be strongly correlated (which is supported by the value $r=.4614$). Thus, we will remove "SAT" as a potential variable of use for our model of GPA. 
+
+
+
+
+##### **Removing Other Variables**
+We will also exclude "HigherSAT" because students who score higher on the math section are most likely to be taking classes in a math-related field and vice versa for verbal students. So these students will always be expected to have higher grades in their respective fields. Thus, it contributes no information for predicting GPA. 
+
+The remaining variables that we consider to be potentially useful for creating a model for predicting $y$, the GPA of the student, are listed below:
+
+$$
+\begin{split} 
+& {\text{1. Year}} \\ 
+& {\text{2. Award}} \\ 
+& {\text{3. Weight}} \\ 
+& {\text{4. Siblings}} \\ 
+& {\text{5. BirthOrder}} \\ 
+& {\text{6. VerbalSAT}} \\ 
+& {\text{7. MathSAT}} \\ 
+& {\text{8. Piercings}} \\ 
+\end{split}
+$$
+
+### **Variable Screening**
+With one 3-level, and one 8-level qualitative variables and 6 quantitative variables, we would need more than a hundred terms to create a second order model for GPA. Since the sample size is $n=291$, there are too few degrees of freedom available for fitting this model. Hence, we require a screening procedure to find a subset of the independent variables that best predict $y$. 
+
+We will employ step-wise regression to obtain these "best" predictors.
+
+```{r Stepwise Regression}
+CompModel <- lm(GPA ~ Year + as.factor(Award) + Weight + Siblings + as.factor(BirthOrder) + VerbalSAT + MathSAT + Piercings, data = StdntSrvy)
+ols_step_both_p(CompModel)
+```
+
+These specific variables have been chosen because their combination seems to maximize the adjusted R-Square and minimize C(p) values. This is illustrated in the graphs below, relating said values to the number of "important" variables in the final model.
+
+```{r Stepwise Regression Plots, message=FALSE, echo=FALSE}
+plot(ols_step_both_p(CompModel))
+```
+
+Therefore the stepwise regression printout leads us to select only the following variables for the model-building process:
+$$
+\begin{split} 
+& {\text{1. Verbal SAT score}} \\ 
+& {\text{2. Weight (in pounds)}} \\ 
+& {\text{3. Math SAT score}} \\ 
+& {\text{4. Award (Academy, Nobel, Olympic)}} \\
+\end{split}
+$$
+
+Verbal and mathematics scores and weight are quantitative variables because they each assume numerical values. Award is a  qualitative variable that we must describe with dummy (or coded) variables. The variable assignments are given as follows:
+$$
+\begin{split}
+& x_1={\text{Verbal SAT score}} \\
+& x_2={\text{Math SAT score}} \\
+& x_3={\text{Weight}} \\
+& x_4=
+\begin{cases} 
+1 & \text{if student prefers Nobel} \\ 0 & \text{if otherwise} 
+\end{cases} \\
+& x_5=
+\begin{cases} 
+1 & \text{if student prefers Olympic} \\ 0 & \text{if otherwise} 
+\end{cases}
+\end{split}
+$$
+
+Note that we have arbitrarily chosen "Academy" to be the base level of preferred award in defining the dummy variables. 
+
+We now transform our data frame to correspond with the previously defined variables. The a few rows are shown in the printout below.
+
+```{r Dummy Variables}
+PrdctData <- subset(dummy_cols(StdntSrvy), select=c(GPA, VerbalSAT, MathSAT, Weight, Award_Nobel, Award_Olympic))
+PrdctData
+```
+
+
+
+### **Model Selection and Develop Models**
+The complete second-order model shown below is a good place to start the model-building process since most real-world relationships are curvilinear. It is shown below.
+
+$$
+\begin{split}
+y= {\beta}_0 & + {\beta}_1x_1 + {\beta}_2x_2 + {\beta}_3x_3 + {\beta}_4x_1x_2 + {\beta}_5x_1x_3 + {\beta}_6x_2x_3 + {\beta}_7x_1^2 + {\beta}_8x_2^2 + {\beta}_9x_3^2 + {\beta}_{10}x_4 + {\beta}_{11}x_5 \\ 
+& + {\beta}_{12}x_1x_4 + {\beta}_{13}x_2x_4 + {\beta}_{14}x_3x_4 + {\beta}_{15}x_1x_2x_4 + {\beta}_{16}x_1x_3x_4 + {\beta}_{17}x_2x_3x_4 + {\beta}_{18}x_1^2x_4 + {\beta}_{19}x_2^2x_4 + {\beta}_{20}x_3^2x_4 \\
+& + {\beta}_{21}x_1x_5 + {\beta}_{22}x_2x_5 + {\beta}_{23}x_3x_5 + {\beta}_{24}x_1x_2x_5 + {\beta}_{25}x_1x_3x_5 + {\beta}_{26}x_2x_3x_5 + {\beta}_{27}x_1^2x5 + {\beta}_{28}x_2^2x_5 + {\beta}_{29}x_3^2x_5
+\end{split}
+$$
+
+```{r Model 1}
+x1 <- PrdctData$VerbalSAT
+x2 <- PrdctData$MathSAT
+x3 <- PrdctData$Weight
+x4 <- as.factor(PrdctData$Award_Nobel)
+x5 <- as.factor(PrdctData$Award_Olympic)
+Model1 <- lm(GPA ~ x1 + x2 + x3 + x1*x2 + x1*x3 + x2*x3 + I(x1^2) + I(x2^2) + I(x3^2) 
+                + x4 + x5
+                + x1*x4 + x2*x4 + x3*x4 + x1*x2*x4 + x1*x3*x4 + x2*x3*x4 + I(x1^2)*x4 + I(x2^2)*x4 + I(x3^2)*x4
+                + x1*x5 + x2*x5 + x3*x5 + x1*x2*x5 + x1*x3*x5 + x2*x3*x5 + I(x1^2)*x5 + I(x2^2)*x5 + I(x3^2)*x5,
+                data = PrdctData)
+summary(Model1)
+```
+
+Note that the p-value for the global model F-test is less than .0001, indicating that the complete second-order model is statistically useful for predicting student GPA.
+
+##### **Test for Significance of All Quadratic Terms (Complete Second-Order Model vs. Model 2)**
+We will test for the importance of the curvature terms by creating a subset model, which we'll call Model 2, that is equal to the complete second-order model with the quadratic terms dropped and comparing said models. 
+
+```{r Model 2}
+Model2 <- lm(GPA ~ x1 + x2 + x3 + x1*x2 + x1*x3 + x2*x3
+                + x4 + x5
+                + x1*x4 + x2*x4 + x3*x4 + x1*x2*x4 + x1*x3*x4 + x2*x3*x4 
+                + x1*x5 + x2*x5 + x3*x5 + x1*x2*x5 + x1*x3*x5 + x2*x3*x5,
+                data = PrdctData)
+```
+
+Now we conduct an F-test with the following hypotheses:
+$$
+\begin{split}
+& H_0:{\beta}_7={\beta}_8={\beta}_9={\beta}_{18}={\beta}_{19}={\beta}_{20}={\beta}_{27}={\beta}_{28}={\beta}_{29}=0 \\
+& H_a:{\text{At least one of the quadratic }}{\beta}{\text {'s in the complete second-order model is nonzero.}} \\
+\end{split}
+$$
+
+```{r Model1-Model2 F-test}
+anova(Model1, Model2)
+```
+
+Because ${\alpha} = .01$ does not exceed the observed significance level, $p = .7061$, there is insufficient evidence of curvature in the relationships between $y$ and verbal and math SAT scores and weight So, we will drop these terms from the complete second-order model and conclude that Model 2 is a statistically better predictor of GPA.
+
+*(Note that by dropping such terms, we are risking committing a Type II error by accepting the null hypothesis as true. We are willing to do this for the sake of having a simpler model which would give us an easier-to-interpret and apply model which is nearly as good as more complex models.)*
+
+```{r Model 2 Summary}
+summary(Model2)
+```
+
+Although $R^2_{adj} = .1833$ implies that only about 18% of the sample variation in the student GPA can be explained by the model, we look at the results of the global F-test (p-value less than .0001), and see that Model 2 is statistically useful for predicting student GPA. The residual standard error 0.3632 implies that differences between observed GPAs and our model and actual values will typically lie around this value. 
+
+We may be able to find an even simpler model that fits the data just as "well" by removing more terms.
+
+
+##### **Test for Significance of All Quantitative–Qualitative Interaction Terms (Model 2 vs. Model 3)**
+We will now test for the importance of all the quantitative–qualitative interaction terms by creating a model, which we'll call Model 3, which contains all the variables of Model 2 with the exception of the quantitative–qualitative interaction terms and conduct an F-test.
+
+```{r Model 3}
+Model3 <- lm(GPA ~ x1 + x2 + x3 + x1*x2 + x1*x3 + x2*x3
+                + x4 + x5,
+                data = PrdctData)
+```
+
+Again, we will conduct an F-test with the following hypotheses:
+$$
+\begin{split}
+& H_0:{\beta}_{12}={\beta}_{13}=...={\beta}_{17}={\beta}_{21}={\beta}_{22}=...={\beta}_{26}=0 \\
+& H_a:{\text{At least one of the QN}}\times {\text{QL }} {\beta}{\text {'s in Model 2 is nonzero.}} \\
+\end{split}
+$$
+
+```{r Model2-Model3 F-test}
+anova(Model2, Model3)
+```
+
+Because ${\alpha} = .01$ does not exceed the observed significance level, $p = .3299$, there is insufficient evidence of interaction between the quantitative variables, verbal SAT score $(x_1)$, math SAT score $(x_2)$, and weight $(x_3)$, with award choice $(x_4)$ and $(x_5)$. Model 3 is a statistically better predictor of GPA than Model 2. 
+
+```{r Model 3 Summary}
+summary(Model3)
+```
+
+##### **Test for Significance of Qualitative Terms (Model 3 vs. Model 4)**
+We will  test for the importance of all the quantitative–quantitative interaction terms by creating a model, which we'll call Model 4, which contains all the variables of Model 3 with the exception of the award variable and conduct an F-test.
+```{r Model 4}
+Model4 <- lm(GPA ~ x1 + x2 + x3 + x1*x2 + x1*x3 + x2*x3, data = PrdctData)
+```
+
+An F-test is conducted with the following hypotheses:
+$$
+\begin{split}
+& H_0:{\beta}_{10}={\beta}_{11}=0 \\
+& H_a:{\text{At least one of the award }} {\beta} {\text{'s in Model 3 is nonzero.}} \\
+\end{split}
+$$
+
+```{r Model3-Model4 F-test}
+anova(Model3, Model4)
+```
+
+Because ${\alpha} = .01$ exceeds the observed significance level, $p = .001482$, there is sufficient evidence to indicate that $(x_4)$ and $(x_5)$ has an impact on student GPA. Model 3 is a statistically better predictor of trucking price than Model 4.
+
+
+##### **Test for Significance of All Quantitative–Quantitative Interaction Terms (Model 3 vs. Model 5)**
+We will now test for the importance of all the quantitative–qualitative interaction terms by creating a model, which we'll call Model 5, which contains all the variables of Model 3 with the exception of the quantitative–quantitative terms and conduct an F-test.
+
+```{r Model 5}
+Model5 <- lm(GPA ~ x1 + x2 + x3
+                + x4 + x5,
+                data = PrdctData)
+```
+
+Again, we will conduct an F-test with the following hypotheses:
+$$
+\begin{split}
+& H_0:{\beta}_{4}={\beta}_{5}={\beta}_{6}=0 \\
+& H_a:{\text{At least one of the QN}}\times {\text{QN }} {\beta}{\text {'s in Model 3 is nonzero.}} \\
+\end{split}
+$$
+
+```{r Model3-Model5 F-test}
+anova(Model3, Model5)
+```
+
+Because ${\alpha} = .01$ does not exceed the observed significance level, $p = .9927$, there is insufficient evidence of interaction between the quantitative variables, verbal SAT score $(x_1)$, math SAT score $(x_2)$, and weight $(x_3)$. Model 5 is a statistically better predictor of GPA than Model 3.
+
+```{r Model 5 Summary}
+summary(Model5)
+```
+
+
+In summary, the nested model F-tests suggest that Model 5, shown below, is the best for modeling student GPAs.
+
+
+$$
+\begin{align}
+& E(y) = \beta_0 + \beta_1x_1 + \beta_2x_2 + \beta_3x_3 + \beta_{10}x_4 + \beta_{11}x_5 \\
+& \hat{y} = {} 2.325 + .00102x_1 + .000951x_2 - .002331x_3 + .1137x_4 - .06187x_5
+\end{align}
+$$
+
+
+*Again, we must note that Model 3 may not be the absolute best for modeling student GPA. We've conducted many, many t-tests on individual ${\beta}$ parameters, and conducted many partial F-tests. This means that the probability of committing a Type I error throughout this process has been very high. In attempts of avoiding this error, also note that we've chosen a small significance value $({\alpha}=.01)$ for these tests.*
+
+
+
+### **Interpreting the Betas**
+$\beta_0$
+
+This value has no meaning in the context of this problem. To see this, note that $\hat{y} = \hat{\beta_0}$ when $x_1 = x_2 = x_3 = x_4 = x_5 = 0$. Thus, $\hat{\beta_0} = 2.325$ represents the estimated GPA of a student when the values of the independent variables are 0. Because a student with these characteristics (a 0 on the verbal and mathematics sections of the SAT, and a weight of 0) is not practical, \hat{\beta_0} has no meaningful interpretation. 
+
+
+$\beta_1$ and $\beta_2$
+
+We estimate the mean GPA E(y) of a student applicant to increase .00102 points, or .000951 points, for every 1-point increase in verbal or mathematics section score on the SAT, respectively when all other variables are held fixed.
+
+
+$\beta_3$
+
+We estimate the mean GPA E(y) of a student applicant to decrease .00233 points for every 1-pound increase weight when all other variables are held fixed.
+
+
+$\beta_{10}$ and $\beta_{11}$
+
+We estimate the mean GPA E(y) of a student applicant to increase .1137 points, or decrease .0619 points, when they prefer to win a Nobel prize or Olympic award, respectively, over an Academy award.
+
+
+
+### **Validate Models**
+##### *Examining the Predicted Values*
+Sometimes, the predicted values ${\hat{y}}$ of the fitted regression model can help to identify an invalid model. Nonsensical or unreasonable predicted values may indicate that the form of the model is incorrect or that the $\beta$ coefficients are poorly estimated. We will plug in a couple of values into our model to determine if such predictions are nonsensical. (It is important to be weary of hidden extrapolation - the jointly defined domain of our data does not necessarily accurately represent the experimental region of our data.) An example is shown below.
+$$x_1 = 500, \text{ } x_2 = 520, \text{ } x_3 = 180, \text{ } x_4 = 0, \text{ } x_5 = 1$$ 
+$$
+\begin{align}
+{\hat{y}} ={} & 2.325 + .00102(500) + .000951(520) - .002331(180) + .1137(0) - .06187(1) \\ 
+={}&2.84
+\end{align}
+$$
+
+The calculation above implies that a student who had received a 500 and a 520 for their verbal and mathematics SAT scores, respectively, is 180 pounds, and prefers to win an Olympic award would have a 2.84 GPA. This is, of course, within the realm of reason; the value is within the 4.0 GPA scale. 
+
+We'll do another example just for the sake of it.
+
+$$x_1 = 640, \text{ } x_2 = 730, \text{ } x_3 = 169, \text{ } x_4 = 1, \text{ } x_5 = 0$$ 
+
+$$
+\begin{align}
+{\hat{y}} ={} & 2.325 + .00102(640) + .000951(730) - .002331(169) + .1137(1) - .06187(0) \\ 
+={}&3.39
+\end{align}
+$$
+
+The calculation above implies that a student who had received a 640 and a 730 for their verbal and mathematics SAT scores, respectively, is 169 pounds, and prefers to win a Nobel prize would have a 3.39 GPA. Again, this value seems to lie within the scope of reason because it is within the 4.0 scale.
+
+
+##### *Examining Estimated Model Parameters*
+Typically, the user of a regression model has some knowledge of the relative size and sign (positive or negative) of the model parameters. This information will be used as a check on the estimated $\beta$ coefficients.
+
+1. Verbal and Mathematics SAT Scores, ($\beta_1 \text{ and } \beta_2$)
+
+These coefficients are approximately equal (by magnitude). This seems reasonable because they're the same test, with approximately the same difficulty on each section (depending on whom you ask, of course). It seems that the coefficient corresponding to mathematics is smaller than the one for verbal. We can reason this by saying that those who take interest in mathematics are likely to have higher math scores, and those same people are more likely to take courses relating to mathematics in higher education. And since math-related classes are notorious for being harder than verbal-related classes for their concreteness, they'd be expected to have smaller GPAs.
+
+2. Weight ($\beta_3$)
+
+There are many studies that conclude that having less excess weight reduces strain on the blood vessels, increasing blood flow to the brain, and boosting overall brain function, causing improvements in memory, concentration, and problem-solving skills which are crucial for a college environment. So it would make sense that there is a negative relationship between GPA and weight. However, weight, as we previously stated, can be affected by height, gender, and many other variables. So, this variable may not be the best for predicting GPA. 
+
+3. Award (Nobel, $x_4=1$)
+
+The sign of this value makes sense because Nobel Prizes are awarded "to those who, during the preceding year, have conferred the greatest benefit to humankind.” Their award categories are in Physics, Chemistry, Physiology or Medicine, Literature and Peace. Five of six of these are fields in academia, so of course one who wishes for an achievement in academia would try to have their GPAs on the higher end to be able to go to graduate school and get their PhDs. Thus, those who prefer Nobel Prizes should have higher GPAs than those who prefer Academy awards, which are factored more by talent and luck than studiousness.
+
+4. Award (Olympic, $x_5=1$)
+
+The sign of this value makes sense because Olympic Prizes are awarded for physical feats: those who attend college holding a higher significance towards sports and the such are more likely to prefer one of these awards than those who prefer Academy awards, which have some classes in university. These may be students who are in college to make a name of themselves for professional sports teams. An argument could also be made that they invest a lot of time in their extracurricular sports activities and thus, do not spend as much time studying to increase their GPAs.
+
+
+
+### **Validate Regression Assumptions**
+When we test a hypothesis about a regression coefficient or a set of regression coefficients, or when we form a prediction interval for a future value of y, we must assume the following about the error term, $\varepsilon$:
+$$ \begin{split}
+1.{\text{ }}& \varepsilon\text{ is normally distributed,} \\
+2.{\text{ }}& \text{has a mean of 0,}\\ 
+3.{\text{ }}& \text{the variance, } \sigma^2 {\text{, is constant,}} \\ 
+4.{\text{ }}& \text{all pairs of error terms are uncorrelated.}
+\end{split} $$
+
+Since we will rarely, if ever, know for certain whether the assumptions are actually satisfied in practice, we will instead examine residuals. 
+
+```{r Residual Plot}
+plot(PrdctData$GPA, resid(Model5), xlab = "GPA", ylab = "Residuals", main = "Residual Plot of Model 5")
+abline(0,0)
+```
+
+From the residual plot, we notice that there exists a trend in the residuals: values tend to be negative for GPAs less than 3.1, and tend to be positive for GPAs greater than 3.1. Points near 3.1 GPA have desired residuals, with many being scattered above and below without pattern. This residual plot would normally mean that some sort of relationship exists between the GPA and the independent variables we've chosen for our model, but because we are constructing a multivariable model, we must instead look at the residuals when other variables are held fixed: a (fitted) partial residual plot. It is shown below.
+
+```{r Partial Residual Plot, warning = FALSE}
+crPlots(m <- lm(GPA ~ x1 + x2 + x3 + x4 + x5, data = PrdctData), data=PrdctData)
+```
+
+Observing the partial residual plots for quantitative variables ($x_1,{} x_2, {} x_3$), there seems to be no visible pattern between residuals, nor do more than 5% of residuals lie outside of $2s$ because many points are evenly spread above and below the $\text{Residual}=0$ line. (An argument could be made that there exists a change in variability, also known as heteroscedasticity, between residuals because the residuals for the variables $x_1$ and $x_2$ on the outside values tend to be a bit smaller and larger on the insides. However, it does not seem to be too dramatic.) The same is true for our qualitative variables: it does not reveal any relationship between residuals because the size of each quartiles of residuals for each award is approximately equal.
+
+
+
+### **Prediction and Inference**
+One of the objectives of this project is to determine if the specific student lies within Hunter College's new standards. As promised, their statistics relevant to the model are shown below.
+
+$$
+\begin{split} 
+& {\text{1. Verbal SAT score}} = 700 \\ 
+& {\text{2. Weight (in pounds)}} = 140 \\ 
+& {\text{3. Math SAT score}} = 700 \\ 
+& {\text{4. Prefers to win an Academy Award}} \\
+\end{split}
+$$
+
+Thus, the values of the variables are as following:
+
+$$x_1 = 700, \text{ } x_2 = 700, \text{ } x_3 = 140, \text{ } x_4 = 0, \text{ } x_5 = 0$$
+
+Hunter College wishes to be at least 90% confident that their students will meet their new standards. We use the prediction interval formula at the desired confidence level and plug in values to get the results shown below.
+
+```{r, Prediction Interval}
+newdat <- data.frame(x1 = 700, x2 = 700, x3 = 140, x4 = "0", x5 = "0")
+predict(Model5, newdata = newdat, interval = "prediction", level = .90)
+```
+
+The printout above gives the 90% prediction interval for GPA when the previously mentioned variable are held fixed. For an applicant with these characteristics, we predict the GPA to lie between 2.76 and 3.99, with 90% confidence. Thus, the student is statistically safe to enroll into the college because the interval lies above 2.7.
+
+*Again, we must be weary with this prediction. The model we had constructed has (as previously stated) a standard residual error of .3643 which is pretty big in the context of GPA.*
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
